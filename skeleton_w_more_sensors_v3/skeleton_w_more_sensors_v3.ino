@@ -79,19 +79,25 @@ int liveness;
 void setup(void)
 {  
   wf.begin();
-  lcd.begin(16,2);
+  
   uint8_t smc_status = eeprom_read_byte((const uint8_t*)tinyWDT_STATUS);
   if (smc_status == 0x37) {
     tinyWDT.begin(1000, smcfg_int);
+    lcd.begin(16,2);
     eeprom_write_byte((uint8_t*)tinyWDT_STATUS, 0);
     while(!attemptSmartConfigCreate());
-    soft_reset();   
+    for(;;);
+    //soft_reset();   
   }
-  tinyWDT.begin(1000, norm_int);  
+  
+  //lcd_print_top("Wait for button");
+  tinyWDT.begin(1000, norm_int); 
+  lcd.begin(16,2);
   liveness = 0;
   pinMode(sm_button, INPUT_PULLUP);
   
   //Serial.begin(115200);
+  /*
   lcd_print_top("Push button for");
   lcd_print_bottom("recalibration");
   time = 0;
@@ -110,6 +116,7 @@ void setup(void)
   }
   lcd.setCursor(15,1);
   lcd.print('\0');
+  */
   time = 0;
   //Serial.println(F("Welcome to WildFire!\n")); 
   lcd_print_top("Push button for \n");
@@ -118,7 +125,8 @@ void setup(void)
     //wait for 10 seconds for user to select smartconfig 
     if (!digitalRead(sm_button)) {
       eeprom_write_byte((uint8_t*)tinyWDT_STATUS, 0x37);
-      soft_reset();
+      time = 10;
+      for(int i = 0; i < 10000; i++) tinyWDT.pet();
     }
     else {
       //Serial.println(F("Waiting for smartconfig"));
@@ -145,7 +153,7 @@ void setup(void)
     }
   }
   time = 0;
-  
+  for(;;);
  // while(!displayConnectionDetails());
   
   // Get the website IP & print it
@@ -242,27 +250,27 @@ void loop() {
       break;
     }
     case DHT_BUS_HUNG: {
-      sprintf(tempbuf_bot, "BUS Hung ");
+      sprintf(tempbuf_bot, "    BUS Hung ");
       break;
     }
     case DHT_ERROR_NOT_PRESENT: {
-      sprintf(tempbuf_bot, "Not Present ");
+      sprintf(tempbuf_bot, "  Not Present ");
       break;
     }
     case DHT_ERROR_ACK_TOO_LONG: {
-      sprintf(tempbuf_bot, "ACK time out ");
+      sprintf(tempbuf_bot, "  ACK time out ");
       break;
     }
     case DHT_ERROR_SYNC_TIMEOUT: {
-      sprintf(tempbuf_bot, "Sync Timeout ");
+      sprintf(tempbuf_bot, "  Sync Timeout ");
       break;
     }
     case DHT_ERROR_DATA_TIMEOUT: {
-      sprintf(tempbuf_bot, "Data Timeout ");
+      sprintf(tempbuf_bot, "  Data Timeout ");
       break;
     }
     case DHT_ERROR_TOOQUICK: {
-      sprintf(tempbuf_bot, "Polled too quick ");
+      sprintf(tempbuf_bot, " Polled too quick ");
       break;
     }
   }
@@ -435,22 +443,6 @@ double getGasConc(int channel, double M, double L){
   return v;
 }
 
-/*
-bool displayConnectionDetails(void) {
-  uint32_t addr, netmask, gateway, dhcpserv, dnsserv;
-
-  if(!cc3000.getIPAddress(&addr, &netmask, &gateway, &dhcpserv, &dnsserv))
-    return false;
-
-  Serial.print(F("IP Addr: ")); cc3000.printIPdotsRev(addr);
-  Serial.print(F("\r\nNetmask: ")); cc3000.printIPdotsRev(netmask);
-  Serial.print(F("\r\nGateway: ")); cc3000.printIPdotsRev(gateway);
-  Serial.print(F("\r\nDHCPsrv: ")); cc3000.printIPdotsRev(dhcpserv);
-  Serial.print(F("\r\nDNSserv: ")); cc3000.printIPdotsRev(dnsserv);
-  Serial.println();
-  return true;
-}
-*/
 boolean attemptSmartConfigReconnect(void){
   /* !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! */
   /* !!! Note the additional arguments in .begin that tell the   !!! */
@@ -550,22 +542,9 @@ void _reset(void) {
       delay (1000);
    }
    lcd_print_top("Resetting now...");
-   //soft_reset();
+   soft_reset();
 }
-/*
-#define NUM_ANALOG_READ_WRAPPED_SAMPLES 100
-// returns the average reading of 100 consecutive samples
-uint16_t analogReadWrapped(uint8_t analog_pin){
-  uint32_t accumulator = 0;
-  uint16_t junk = analogRead(analog_pin);
-  
-  for(uint8_t ii = 0; ii < NUM_ANALOG_READ_WRAPPED_SAMPLES; ii++){
-     accumulator += analogRead(analog_pin);
-  }
 
-  return (accumulator / NUM_ANALOG_READ_WRAPPED_SAMPLES);
-}
-*/
 /*
 *  Checks EEPROM to see if egg already has calibration data
 */

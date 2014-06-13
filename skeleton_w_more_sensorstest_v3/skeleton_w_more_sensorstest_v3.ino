@@ -103,6 +103,8 @@ void setup(void)
     tinyWDT.begin(1000, smcfg_int);
     eeprom_write_byte((uint8_t*)tinyWDT_STATUS, 0);
     while(!attemptSmartConfigCreate());
+    lcd_print_top("Connected!");
+    lcd_print_bottom("Resetting...");
     soft_reset();   
   }
   tinyWDT.begin(1000, norm_int);
@@ -274,27 +276,27 @@ void loop() {
       break;
     }
     case DHT_BUS_HUNG: {
-      sprintf(tempbuf_bot, "BUS Hung ");
+      sprintf(tempbuf_bot, "    BUS Hung ");
       break;
     }
     case DHT_ERROR_NOT_PRESENT: {
-      sprintf(tempbuf_bot, "Not Present ");
+      sprintf(tempbuf_bot, "  Not Present ");
       break;
     }
     case DHT_ERROR_ACK_TOO_LONG: {
-      sprintf(tempbuf_bot, "ACK time out ");
+      sprintf(tempbuf_bot, "  ACK time out ");
       break;
     }
     case DHT_ERROR_SYNC_TIMEOUT: {
-      sprintf(tempbuf_bot, "Sync Timeout ");
+      sprintf(tempbuf_bot, "  Sync Timeout ");
       break;
     }
     case DHT_ERROR_DATA_TIMEOUT: {
-      sprintf(tempbuf_bot, "Data Timeout ");
+      sprintf(tempbuf_bot, "  Data Timeout ");
       break;
     }
     case DHT_ERROR_TOOQUICK: {
-      sprintf(tempbuf_bot, "Polled too quick ");
+      sprintf(tempbuf_bot, " Polled too quick ");
       break;
     }
   }
@@ -743,23 +745,9 @@ void _reset(void) {
       delay (1000);
    }
    lcd_print_top("Resetting now...");
-   for (;;);
+   for(;;);
    //soft_reset();
 }
-/*
-#define NUM_ANALOG_READ_WRAPPED_SAMPLES 100
-// returns the average reading of 100 consecutive samples
-uint16_t analogReadWrapped(uint8_t analog_pin){
-  uint32_t accumulator = 0;
-  uint16_t junk = analogRead(analog_pin);
-  
-  for(uint8_t ii = 0; ii < NUM_ANALOG_READ_WRAPPED_SAMPLES; ii++){
-     accumulator += analogRead(analog_pin);
-  }
-
-  return (accumulator / NUM_ANALOG_READ_WRAPPED_SAMPLES);
-}
-*/
 void printDouble( double val, byte precision){
 // prints val with number of decimal places determine by precision
 // NOTE: precision is 1 followed by the number of zeros for the desired number of decimial places
