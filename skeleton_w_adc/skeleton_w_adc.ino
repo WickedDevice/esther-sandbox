@@ -266,7 +266,7 @@ void loop() {
       while (client.available()) {     
         wdt_reset();        
         char c = client.read();
-        Serial.print(c);
+        //Serial.print(c);
       }
     }  
     
@@ -299,12 +299,17 @@ double getGasConc(int channel, double M){ //double vgas, double vref) {
   //Serial.print("4");
   wdt_disable();
   double v = MCP.Measure();
+  //Serial.print("Voltage = "); // print result
+  //Serial.print(v);
+  //Serial.println(" microVolt");
   //Serial.print("5");
   wdt_enable(WDTO_8S);
   wdt_reset();
   v /= 1000000.0;
   v /= M;
-  //Serial.print("6");
+  //Serial.print("Concentration = ");
+  //Serial.print(v);
+  //Serial.println(" ppm");
   if (v < 2) {
     return 0.00;
   }

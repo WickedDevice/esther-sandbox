@@ -1,6 +1,6 @@
 /*************************
 *  Test version of AQE code
-*  All sensors are connected, posting to Xively
+*  All sensors are connected (including DHT22), posting to Xively
 *  Using external 18-bit ADC
 *  Prints status messages to LCD screen
 *
@@ -17,7 +17,9 @@
 #include <LiquidCrystal.h>
 #include <MCP3424.h>
 #include <Wire.h>
-WildFire wf(WILDFIRE_V2);
+#include <DHT22.h>
+#include <SD.h>
+WildFire wf;
 
 #define soft_reset()        \
 do                          \
@@ -36,7 +38,7 @@ void wdt_init(void)
     return;
 }
 
-WildFire_CC3000 cc3000(WILDFIRE_V2);
+WildFire_CC3000 cc3000;
 int sm_button = 5;
 
 // Security can be WLAN_SEC_UNSEC, WLAN_SEC_WEP, WLAN_SEC_WPA or WLAN_SEC_WPA2
@@ -70,11 +72,16 @@ MCP3424 MCP4(4);
 #define CO_36_M 0.000212
 #define CO_35_M 0.0002
 #define NO2_1_M -0.0149
-#define NO2_2_M -0.0127
+#define NO2_2_M -0.0157
 #define O3_4_M -0.0163
 #define O3_6_M -0.0172
 
 int flag = 0;
+DHT22 myDHT22(16);
+
+int card = 0;
+File myFile;
+
 void setup(void)
 {  
   wdt_enable(WDTO_8S);
@@ -135,6 +142,7 @@ void setup(void)
   ip |= (((uint32_t) 173) << 24);
 
    wdt_reset();   
+   //TODO: add code to check for presence of sensors
 //  cc3000.printIPdotsRev(ip);
   //Serial.println();
   lcd_print_top("Initializing");
@@ -156,6 +164,17 @@ void setup(void)
     lcd.print(59 - time%60);
      time++;
      delay(1000);
+  }
+  
+  if (SD.begin(4)) {
+    card = 1;
+    myFile = SD.open("data.txt", FILE_WRITE);
+    myFile.println(F("Time (ms), CO_35 (ppm), CO_36 (ppm), NO2_1 (ppm), NO2_2 (ppm), O3_4 (ppm), O3_6 (ppm), Temperature (C), Humidity (\%)"));
+    Serial.println(F("Time (ms), CO_35 (ppm), CO_36 (ppm), NO2_1 (ppm), NO2_2 (ppm), O3_4 (ppm), O3_6 (ppm), Temperature (C), Humidity (\%)"));
+    myFile.close();
+  }
+  else {
+    card = 0;
   }
   lcd_print_top("Ready to begin");
   lcd_print_bottom("collecting data!");
@@ -185,39 +204,122 @@ void loop() {
 
   //from ADC
   //TODO: check for presence of sensor
+  unsigned long currTime = millis();
   double CO_36 = getGasConc6(CO_chan_36, CO_36_M); //TODO: put this value into EEPROM
   double CO_35 = getGasConc4(CO_chan_35, CO_35_M);
   double NO2_1 = getGasConc4(NO2_chan_1, NO2_1_M);
   double NO2_2= getGasConc4(NO2_chan_2, NO2_2_M);
   double O3_4 = getGasConc6(O3_chan_4, O3_4_M);
   double O3_6 = getGasConc6(O3_chan_6, O3_6_M);
-  double temp = 0; //TODO get reading
-  double hum = 0; //TODO get reading
-  //TODO: add code for reading from DHT22
+  double temp;
+  double hum;
+  DHT22_ERROR_t errorCode = myDHT22.readData();
+  char tempbuf_bot[17] = "";
+  switch(errorCode)
+  {
+    case DHT_ERROR_NONE: {
+      temp = myDHT22.getTemperatureC();
+      hum = myDHT22.getHumidity();
+      break;
+    }
+    case DHT_ERROR_CHECKSUM: {
+      sprintf(tempbuf_bot, "checksum error ");
+      break;
+    }
+    case DHT_BUS_HUNG: {
+      sprintf(tempbuf_bot, "BUS Hung ");
+      break;
+    }
+    case DHT_ERROR_NOT_PRESENT: {
+      sprintf(tempbuf_bot, "Not Present ");
+      break;
+    }
+    case DHT_ERROR_ACK_TOO_LONG: {
+      sprintf(tempbuf_bot, "ACK time out ");
+      break;
+    }
+    case DHT_ERROR_SYNC_TIMEOUT: {
+      sprintf(tempbuf_bot, "Sync Timeout ");
+      break;
+    }
+    case DHT_ERROR_DATA_TIMEOUT: {
+      sprintf(tempbuf_bot, "Data Timeout ");
+      break;
+    }
+    case DHT_ERROR_TOOQUICK: {
+      sprintf(tempbuf_bot, "Polled too quick ");
+      break;
+    }
+  }
   //Serial.print("7");
   wdt_reset();
   //post
   int datalength = 0;
   #define DATA_MAX_LENGTH 512
   char data[DATA_MAX_LENGTH] = "\n";
+  char SDdata[DATA_MAX_LENGTH];
+  if (card) {
+    sprintf(SDdata, "%lu", currTime);
+    strcat_P(SDdata, PSTR(","));
+  }
   strcat_P(data, PSTR("{\"version\":\"1.0.0\",\"datastreams\" : [{\"id\" : \"CO_36\",\"current_value\" : \""));
   char dbuf[10] = "";
   strcat(data,dtostrf(CO_36, 5, 3, dbuf)); 
+  if (card) {
+    strcat(SDdata, dbuf);
+    strcat_P(SDdata, PSTR(","));
+  }
   strcat_P(data, PSTR("\"},"));
   strcat_P(data, PSTR("{\"id\" : \"CO_35\",\"current_value\" : \""));
-  strcat(data, dtostrf(CO_35, 5, 3, dbuf));  
+  strcat(data, dtostrf(CO_35, 5, 3, dbuf)); 
+ if (card) {
+    strcat(SDdata, dbuf);
+    strcat_P(SDdata, PSTR(","));
+  } 
   strcat_P(data, PSTR("\"},"));
   strcat_P(data, PSTR("{\"id\" : \"NO2_1\",\"current_value\" : \""));
   strcat(data, dtostrf(NO2_1, 5, 3, dbuf));
+  if (card) {
+    strcat(SDdata, dbuf);
+    strcat_P(SDdata, PSTR(","));
+  }
   strcat_P(data, PSTR("\"},"));
   strcat_P(data, PSTR("{\"id\" : \"NO2_2\",\"current_value\" : \""));
   strcat(data, dtostrf(NO2_2, 5, 3, dbuf));
+  if (card) {
+    strcat(SDdata, dbuf);
+    strcat_P(SDdata, PSTR(","));
+  }
   strcat_P(data, PSTR("\"},"));
   strcat_P(data, PSTR("{\"id\" : \"O3_4\",\"current_value\" : \""));
   strcat(data, dtostrf(O3_4, 5, 3, dbuf));
+  if (card) {
+    strcat(SDdata, dbuf);
+    strcat_P(SDdata, PSTR(","));
+  }
   strcat_P(data, PSTR("\"},"));
   strcat_P(data, PSTR("{\"id\" : \"O3_6\",\"current_value\" : \""));
   strcat(data, dtostrf(O3_6, 5, 3, dbuf));
+  if (card) {
+    strcat(SDdata, dbuf);
+    strcat_P(SDdata, PSTR(","));
+  }
+  if (errorCode == DHT_ERROR_NONE) {
+    strcat_P(data, PSTR("\"},"));
+    strcat_P(data, PSTR("{\"id\" : \"Temperature\",\"current_value\" : \""));
+    strcat(data, dtostrf(temp, 5, 3, dbuf));
+    if (card) {
+    strcat(SDdata, dbuf);
+    strcat_P(SDdata, PSTR(","));
+  }
+    strcat_P(data, PSTR("\"},"));
+    strcat_P(data, PSTR("{\"id\" : \"Humidity\",\"current_value\" : \""));
+    strcat(data, dtostrf(hum, 5, 3, dbuf));
+    if (card) {
+    strcat(SDdata, dbuf);
+    strcat_P(SDdata, PSTR("\n"));
+  }
+  }
   strcat_P(data, PSTR("\"}]}"));
   //lcd.print("2");
   datalength = strlen(data);
@@ -275,6 +377,14 @@ void loop() {
     delay(1000);   
     _reset();
   }
+  if (card) {
+    myFile = SD.open("data.txt", FILE_WRITE);
+    if (myFile) {    
+      myFile.print(SDdata);
+      Serial.print(SDdata);
+      myFile.close();
+    }
+  }
 
 //Cycle through readings? loop1:CO loop2:NO2 loop3:O3 loop4:temp loop5:hum  
 switch (flag) {
@@ -313,24 +423,33 @@ switch (flag) {
     lcd.setCursor(4,1);
     lcd.print(O3_6); lcd.print(" ppm(2)");
     break;
-  }    
-  /*
-  case 3: {
+  }      
+  case 6: {
     lcd_print_top("  Temperature");
-    lcd.setCursor(4,1);
-    lcd.print(temp); lcd.print(" C");
+    if (errorCode == DHT_ERROR_NONE) {
+      lcd.setCursor(4,1);
+      lcd.print(temp); lcd.print(" C");
+    }
+    else {
+      lcd_print_bottom(tempbuf_bot);
+    }
     break;
   }
-  case 4: {
+  case 7: {
     lcd_print_top("    Humidity");
-    lcd.setCursor(5,1);
-    lcd.print(hum); lcd.print(" %");
+    if (errorCode == DHT_ERROR_NONE) {
+      lcd.setCursor(5,1);
+      lcd.print(hum); lcd.print(" %");
+    }
+    else {
+      lcd_print_bottom(tempbuf_bot);
+    }
     break;
   }
-  */
+  
 }
 flag++;
-flag %= 6;
+flag %= 8;
   
     //Serial.println(F("-------------------------------------"));
     wdt_reset();    
