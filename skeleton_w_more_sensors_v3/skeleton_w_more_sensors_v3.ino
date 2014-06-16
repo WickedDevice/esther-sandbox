@@ -8,7 +8,7 @@
 **************************/
 #include <WildFire_CC3000.h>
 #include <SPI.h>
-#include <avr/wdt.h>
+//#include <avr/wdt.h>
 #include <string.h>
 #include <stdlib.h>
 #include <WildFire.h>
@@ -23,6 +23,7 @@
 WildFire wf;
 DHT22 myDHT22(26); //A2
 
+/*
 #define soft_reset()        \
 do                          \
 {                           \
@@ -39,6 +40,7 @@ void wdt_init(void)
     wdt_disable();
     return;
 }
+*/
 
 WildFire_CC3000 cc3000;
 int sm_button = 5;
@@ -65,6 +67,7 @@ double NO2_M;
 double O3_M;
 const long magic_number = 0x5485;
 
+#define PROVISIONING_STATUS_GOOD 0x73
 char api_key[API_KEY_LENGTH];
 char feedID[FEED_ID_LENGTH];
 int flag = 0;
@@ -74,62 +77,68 @@ unsigned long previousMillis = 0;
 long interval = 4000;
 int liveness;
 #define norm_int 20000
-#define smcfg_int 90000
+#define smcfg_int 60000
+/*
+tinyWDT_STATUS: 0x0 = initial state; 0x37 = initiate smartconfig; 0x5b = skip smartconfig timer
+*/
 
 void setup(void)
 {  
   wf.begin();
-  
+  Serial.begin(115200);
+  lcd.begin(16,2);
+  lcd.clear();
   uint8_t smc_status = eeprom_read_byte((const uint8_t*)tinyWDT_STATUS);
   if (smc_status == 0x37) {
+    //Smartconfig was initiated, so attempt to create new connection
     tinyWDT.begin(1000, smcfg_int);
-    lcd.begin(16,2);
     eeprom_write_byte((uint8_t*)tinyWDT_STATUS, 0);
     while(!attemptSmartConfigCreate());
-    for(;;);
-    //soft_reset();   
+    lcd_print_top("Connecting...");
+    delay(1000);
+    eeprom_write_byte((uint8_t*)tinyWDT_STATUS, 0x5b);
+    tinyWDT.force_reset();
+    delay(1000);
+  }
+  else if (smc_status == 0x5b) {
+    //New smartconfig connection was saved, so skip smartconfig timeout
+    tinyWDT.begin(1000, norm_int);
+    eeprom_write_byte((uint8_t*)tinyWDT_STATUS, 0); 
+    liveness = 0;
+    pinMode(sm_button, INPUT_PULLUP);
+    time = 10;
+    lcd_print_top("Reconnecting...");
+  }
+  else {
+    //Startup as normal
+    tinyWDT.begin(1000, norm_int); 
+    liveness = 0;
+    pinMode(sm_button, INPUT_PULLUP);
+    time = 0;
+    //Serial.println(F("Welcome to WildFire!\n")); 
+    lcd_print_top("Push button for \n");
+    lcd_print_bottom("Smartconfig");
   }
   
-  //lcd_print_top("Wait for button");
-  tinyWDT.begin(1000, norm_int); 
-  lcd.begin(16,2);
-  liveness = 0;
-  pinMode(sm_button, INPUT_PULLUP);
-  
-  //Serial.begin(115200);
-  /*
-  lcd_print_top("Push button for");
-  lcd_print_bottom("recalibration");
-  time = 0;
-  while (time < 10) {
-    if (!digitalRead(sm_button)) {
-      Serial.begin(115200);
-      initialize_eeprom();
-    }
-    else {
-      time++;
-      tinyWDT.pet();
-      lcd.setCursor(15,1);
-      lcd.print(10 - time);
-      delay(1000);
-    }
-  }
-  lcd.setCursor(15,1);
-  lcd.print('\0');
-  */
-  time = 0;
-  //Serial.println(F("Welcome to WildFire!\n")); 
-  lcd_print_top("Push button for \n");
-  lcd_print_bottom("Smartconfig");
   while (time < 10) {
     //wait for 10 seconds for user to select smartconfig 
     if (!digitalRead(sm_button)) {
       eeprom_write_byte((uint8_t*)tinyWDT_STATUS, 0x37);
       time = 10;
-      for(int i = 0; i < 10000; i++) tinyWDT.pet();
+      tinyWDT.force_reset();
+      delay(1000);
     }
     else {
-      //Serial.println(F("Waiting for smartconfig"));
+      //Allow user to initiate resetting calibration values via serial monitor
+      if (Serial.available()) {
+        char c = Serial.read();
+        initialize_eeprom();
+        Serial.println("Resetting now...");
+        lcd_print_top("Resetting now...");
+        delay(1000);
+        tinyWDT.force_reset();
+        delay(1000);
+      }
       time++;
       if (time%2 == 0) {
         tinyWDT.pet();
@@ -138,32 +147,32 @@ void setup(void)
         lcd.print(10 - time);
         delay(1000);
       }
+      if (time == 10) {
+        lcd_print_top("Reconnecting...");
+      }
     }
   if (time >= 10) {  
-    //Serial.println(F("Attempting to reconnect"));
-    lcd_print_top("Reconnecting... ");
-    //wdt_reset();
+    //lcd_print_top("Reconnecting... ");
     if(!attemptSmartConfigReconnect()){
       lcd_print_bottom("Failed!");
-      //Serial.println(F("Reconnect failed!"));
       cc3000.disconnect();
       delay(1000);
       _reset();
-      //soft_reset();
     }
   }
   time = 0;
-  for(;;);
- // while(!displayConnectionDetails());
-  
-  // Get the website IP & print it
+  // Get the website IP
   ip = 0;
-  // 173.203.98.29
-  ip = 29;
-  ip |= (((uint32_t) 98) << 8);
-  ip |= (((uint32_t) 203) << 16);
-  ip |= (((uint32_t) 173) << 24);
+  while(ip == 0) {
+    cc3000.getHostByName(WEBSITE, &ip);
+  }
   
+  uint8_t test = eeprom_read_byte((const uint8_t *) ACTIVATION_STATUS_EEPROM_ADDRESS);
+  if(test != PROVISIONING_STATUS_GOOD){
+    lcd_print_top("This egg is not ");
+    lcd_print_bottom("   activated!");
+    for(;;);
+  }
   eeprom_read_block(api_key, (const void*)API_KEY_EEPROM_ADDRESS, API_KEY_LENGTH);
   eeprom_read_block(feedID, (const void*)FEED_ID_EEPROM_ADDRESS, FEED_ID_LENGTH); 
   long magic;
@@ -173,28 +182,20 @@ void setup(void)
     lcd_print_top("Missing sensor");
     lcd_print_bottom("calibration data!");
     for(;;);
-    //delay(2000);
-      //wdt_reset();
+
     }
    
   eeprom_read_block(&CO_M, (const void*)CO_cal, sizeof(float));
   eeprom_read_block(&NO2_M, (const void*)NO2_cal, sizeof(float));
   eeprom_read_block(&O3_M, (const void*)O3_cal, sizeof(float));
-  
-   //Serial.println("The current values are :");
-    //Serial.print("CO sensor : "); printDouble(CO_M, 6); Serial.println();
-    //Serial.print("NO2 sensor : "); printDouble(NO2_M, 6); Serial.println();
-    //Serial.print("O3 sensor : "); printDouble(O3_M, 6); Serial.println();
-    //Serial.println();
-    
-  Serial.begin(115200);
+
   lcd_print_top("Initializing");
   lcd_print_bottom("sensors... 15:00");
   delay(1000);
   //15 min sensor warmup
   time = 0;
   while (time < 900) { //TODO: change back to 900 seconds
-    if (time%2000 == 0) {
+    if (time%2 == 0) {
       tinyWDT.pet();
     }
     lcd_print_top("Initializing");
@@ -208,7 +209,6 @@ void setup(void)
       lcd.print(0);
     }
     lcd.print(59 - time%60);
-    Serial.println(time);
     time++;
     delay(1000);
   }
@@ -460,8 +460,7 @@ boolean attemptSmartConfigReconnect(void){
     //Serial.println(F("sketch to store your connection details?"));
     return false;
   }
-  //Serial.println(3);
-  //wdt_reset();
+  
   /* Round of applause! */
   lcd_print_top("Reconnected!");
   //Serial.println(F("Reconnected!"));
@@ -476,7 +475,6 @@ boolean attemptSmartConfigReconnect(void){
     if (time%2000 == 0) {
         tinyWDT.pet();
       }
-    //wdt_reset();
     if (time > 10000) {
       lcd_print_top("DHCP failed!");
       delay(500);
@@ -511,23 +509,7 @@ boolean attemptSmartConfigCreate(void){
   
  // Serial.println(F("Saved connection details and connected to AP!"));
   lcd_print_top("Connection saved!");
-  /* Wait for DHCP to complete */
-  lcd_print_bottom("Requesting DHCP...");
-  //Serial.println(F("Request DHCP"));
-  while (!cc3000.checkDHCP()) 
-  {
-    delay(100);
-    time += 100;
-    if (time%2000 == 0) {
-        tinyWDT.pet();
-      }
-    if (time > 20000) {
-      time = 0;
-      lcd_print_top("DHCP failed!");
-      //Serial.println(F("DHCP failed!"));
-      return false;
-    }
-  }  
+  //do not request DHCP, since we will be resetting the device anyways 
   
   return true;
 }
@@ -542,13 +524,19 @@ void _reset(void) {
       delay (1000);
    }
    lcd_print_top("Resetting now...");
-   soft_reset();
+   tinyWDT.force_reset();
+   delay(1000);
 }
 
 /*
 *  Checks EEPROM to see if egg already has calibration data
 */
 void initialize_eeprom() {
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis > interval) {
+    previousMillis = currentMillis;
+    tinyWDT.pet();
+  }
    long magic;
   eeprom_read_block(&magic, (const void*)CAL_MAGIC, sizeof(float));
   if(magic != magic_number) {
@@ -567,7 +555,13 @@ void initialize_eeprom() {
     Serial.print("O3 sensor : "); printDouble(O3_M, 6); Serial.println();
     Serial.println();
     Serial.println("Would you like to reset these values? Current data will be overwritten! (y/n)");
-    while(Serial.available() <= 0);
+    while(Serial.available() <= 0) {
+      unsigned long currentMillis = millis();
+      if (currentMillis - previousMillis > interval) {
+        previousMillis = currentMillis;
+        tinyWDT.pet();
+      }
+    }
     if (Serial.available() > 0) {
       char response = Serial.read();
       if (response == 'y') {
@@ -587,17 +581,35 @@ void _initialize_eeprom() {
     Serial.println("IMPORTANT: Please include the leading 0 before the decimal point.");
     Serial.println();
     Serial.println("Enter calibration value for the CO sensor: ");
-    while(Serial.available() <= 0);
-    if (Serial.available() > 0) {
-      CO_M = Serial.parseFloat();
+    while(Serial.available() <= 0) {
+      unsigned long currentMillis = millis();
+      if (currentMillis - previousMillis > interval) {
+        previousMillis = currentMillis;
+        tinyWDT.pet();
+      }
     }
+      if (Serial.available() > 0) {
+        CO_M = Serial.parseFloat();
+      }
     Serial.println("Enter calibration value for the NO2 sensor: ");
-      while(Serial.available() <= 0);
+    while(Serial.available() <= 0) {
+      unsigned long currentMillis = millis();
+      if (currentMillis - previousMillis > interval) {
+        previousMillis = currentMillis;
+        tinyWDT.pet();
+      }
+    }
     if (Serial.available() > 0) {
       NO2_M = Serial.parseFloat();
     }
-      Serial.println("Enter calibration value for the O3 sensor: ");
-      while(Serial.available() <= 0);
+    Serial.println("Enter calibration value for the O3 sensor: ");
+    while(Serial.available() <= 0) {
+      unsigned long currentMillis = millis();
+      if (currentMillis - previousMillis > interval) {
+        previousMillis = currentMillis;
+        tinyWDT.pet();
+      }
+    }
     if (Serial.available() > 0) {
       O3_M = Serial.parseFloat();
     }
@@ -611,7 +623,13 @@ void _initialize_eeprom() {
     printDouble(O3_M, 6);
     Serial.println();
     Serial.println("Are these values correct? (y/n)");
-    while(Serial.available() <= 0);
+    while(Serial.available() <= 0) {
+    unsigned long currentMillis = millis();
+      if (currentMillis - previousMillis > interval) {
+        previousMillis = currentMillis;
+        tinyWDT.pet();
+      }
+    }
     char response;
     if (Serial.available() > 0) {
       response = Serial.read();
