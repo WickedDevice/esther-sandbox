@@ -5,45 +5,35 @@
 *  Prints status messages to LCD screen
 *  TODO: Remove all serial monitor related code
 *  TODO: Add local data storage option (SD card)
+*  TODO: Add code to check for presence of sensor
+*  TODO: Add detection for sensor warmup period (need MCUSR)
+*  TODO: Integrate particulate sensor
 **************************/
-#include <WildFire_CC3000.h>
+
 #include <SPI.h>
-//#include <avr/wdt.h>
 #include <string.h>
 #include <stdlib.h>
 #include <WildFire.h>
+#include <WildFire_CC3000.h>
 #include <LiquidCrystal.h>
 #include <MCP3424.h>
 #include <Wire.h>
 #include <DHT22.h>
 #include <avr/eeprom.h>
 #include <TinyWatchdog.h>
+#include <lmp91000.h>
 #include "MemoryLocations.h"
 
 WildFire wf;
-DHT22 myDHT22(26); //A2
-
-/*
-#define soft_reset()        \
-do                          \
-{                           \
-    wdt_enable(WDTO_15MS);  \
-    for(;;)                 \
-    {                       \
-    }                       \
-} while(0)
-
-void wdt_init(void) __attribute__((naked)) __attribute__((section(".init3")));
-void wdt_init(void)
-{
-    MCUSR = 0;
-    wdt_disable();
-    return;
-}
-*/
-
 WildFire_CC3000 cc3000;
-int sm_button = 5;
+WildFire_CC3000_Client client;
+int sm_button = 27;
+DHT22 myDHT22(24); //A2
+LiquidCrystal lcd(2,3, 4,5,6,8);
+MCP3424 MCP(6);
+TinyWatchdog tinyWDT(14);
+
+
 
 // Security can be WLAN_SEC_UNSEC, WLAN_SEC_WEP, WLAN_SEC_WPA or WLAN_SEC_WPA2
 #define WLAN_SECURITY   WLAN_SEC_WPA2
@@ -52,35 +42,47 @@ int sm_button = 5;
 #define WEBSITE  "api.xively.com"
 //#define API_key  "aNMDa3DHcW9XqQUmuFQ7HrbKLqcmVO1dHBWPAQRcng9qHhft"
 //#define feedID   "1293806464"
+
 int time = 0;
-LiquidCrystal lcd(4, 3, 24, 25, 30, 31);
 uint32_t ip;
-WildFire_CC3000_Client client;
 
-#define CO_chan 1
-#define NO2_chan 2
-#define O3_chan 3
-MCP3424 MCP(6); // Declaration of MCP3424
-
+//#define CO_chan 1
+//#define NO2_chan 2
+//#define O3_chan 3
 double CO_M;
 double NO2_M;
 double O3_M;
 const long magic_number = 0x5485;
+#define CO_MENB 7
+#define NO2_MENB 9
+#define O3_MENB 10
+LMP91000 CO_LMP(CO_MENB, type_CO);
+LMP91000 NO2_LMP(NO2_MENB, type_NO2);
+LMP91000 O3_LMP(O3_MENB, type_O3);
+uint8_t CO_PRESENT = 0;
+uint8_t NO2_PRESENT = 0;
+uint8_t O3_PRESENT = 0;
+
+#define particulate1 25
+#define particulate2 24
 
 #define PROVISIONING_STATUS_GOOD 0x73
 char api_key[API_KEY_LENGTH];
 char feedID[FEED_ID_LENGTH];
 int flag = 0;
 
-TinyWatchdog tinyWDT(14);
+
 unsigned long previousMillis = 0;
 long interval = 4000;
 int liveness;
 #define norm_int 20000
 #define smcfg_int 60000
 /*
-tinyWDT_STATUS: 0x0 = initial state; 0x37 = initiate smartconfig; 0x5b = skip smartconfig timer
+tinyWDT_STATUS: 0x0 = initial state; 0x37 = initiate smartconfig; 0x5b = skip smartconfig timer (and initiate sensor warmup); 
 */
+
+char packet_buffer[2048];
+#define BUFSIZE 511
 
 void setup(void)
 {  
@@ -115,7 +117,6 @@ void setup(void)
     liveness = 0;
     pinMode(sm_button, INPUT_PULLUP);
     time = 0;
-    //Serial.println(F("Welcome to WildFire!\n")); 
     lcd_print_top("Push button for \n");
     lcd_print_bottom("Smartconfig");
   }
@@ -167,58 +168,86 @@ void setup(void)
     cc3000.getHostByName(WEBSITE, &ip);
   }
   
+  //Get stored API key, feed ID, and calibration data
   uint8_t test = eeprom_read_byte((const uint8_t *) ACTIVATION_STATUS_EEPROM_ADDRESS);
   if(test != PROVISIONING_STATUS_GOOD){
-    lcd_print_top("This egg is not ");
-    lcd_print_bottom("   activated!");
-    for(;;);
+    for(;;) {
+      lcd_print_top("This egg is not ");
+      lcd_print_bottom("   activated!");
+      delay(2000);
+      lcd_print_top(" Please contact");
+      lcd_print_bottom(" Wicked Device");
+      delay(2000);
+      tinyWDT.pet();
+    }
   }
   eeprom_read_block(api_key, (const void*)API_KEY_EEPROM_ADDRESS, API_KEY_LENGTH);
   eeprom_read_block(feedID, (const void*)FEED_ID_EEPROM_ADDRESS, FEED_ID_LENGTH); 
   long magic;
   eeprom_read_block(&magic, (const void*)CAL_MAGIC, sizeof(float));
   if(magic != magic_number) {
-    //Serial.println("no calibration data!");
-    lcd_print_top("Missing sensor");
-    lcd_print_bottom("calibration data!");
-    for(;;);
-
+    for (;;) {
+      lcd_print_top("Missing sensor");
+      lcd_print_bottom("calibration data!");
+      delay(2000);
+      lcd_print_top(" Please contact");
+      lcd_print_bottom(" Wicked Device");
+      delay(2000);
+      tinyWDT.pet();
     }
-   
+  }
+
+  //read all constants whether they are there or not
   eeprom_read_block(&CO_M, (const void*)CO_cal, sizeof(float));
   eeprom_read_block(&NO2_M, (const void*)NO2_cal, sizeof(float));
   eeprom_read_block(&O3_M, (const void*)O3_cal, sizeof(float));
-
-  lcd_print_top("Initializing");
-  lcd_print_bottom("sensors... 15:00");
-  delay(1000);
-  //15 min sensor warmup
-  time = 0;
-  while (time < 900) { //TODO: change back to 900 seconds
-    if (time%2 == 0) {
-      tinyWDT.pet();
-    }
-    lcd_print_top("Initializing");
-    lcd_print_bottom("sensors...");
-    lcd.setCursor(11,1);
-    if((14 - time/60) < 10) {
-      lcd.print(" ");
-    }
-    lcd.print(14 - time/60); lcd.print(":"); 
-    if ((59 - time%60) < 10) {
-      lcd.print(0);
-    }
-    lcd.print(59 - time%60);
-    time++;
-    delay(1000);
+  
+  //configure LMP91000
+  if (CO_LMP.begin()) {
+    CO_PRESENT = 1;
+  }
+  if (NO2_LMP.begin()) {
+    NO2_PRESENT = 1;
+  }
+  if (O3_LMP.begin()) {
+    O3_PRESENT = 1;
   }
   
+  //configure particulate sensor (later will be replaced by global initialization)
+  pinMode(particulate1, INPUT);
+  pinMode(particulate2, INPUT);
+  
+  //TODO: this conditional statement depends on the value of MCUSR and tinyWDT status
+  if (1) {
+    lcd_print_top("Initializing");
+    lcd_print_bottom("sensors... 15:00"); //can probably cut this down to 12 min?
+    delay(1000);
+    //15 min sensor warmup
+    time = 0;
+    while (time < 900) {
+      if (time%2 == 0) {
+        tinyWDT.pet();
+      }
+      lcd_print_top("Initializing");
+      lcd_print_bottom("sensors...");
+      lcd.setCursor(11,1);
+      if((14 - time/60) < 10) {
+        lcd.print(" ");
+      }
+      lcd.print(14 - time/60); lcd.print(":"); 
+      if ((59 - time%60) < 10) {
+        lcd.print(0);
+      }
+      lcd.print(59 - time%60);
+      time++;
+      delay(1000);
+    }
+  }
   lcd_print_top("Ready to begin");
   lcd_print_bottom("collecting data!");
 }
 
-char packet_buffer[2048];
-#define BUFSIZE 511
+
 
 void loop() {
   unsigned long currentMillis = millis();
@@ -231,9 +260,18 @@ void loop() {
   //from ADC
   //TODO: check for presence of sensor
   int currTime = millis();
-  double CO = getGasConc(CO_chan, CO_M, 2.0); 
-  double NO2 = getGasConc(NO2_chan, NO2_M, 0.3);
-  double O3 = getGasConc(O3_chan,  O3_M, 0.3);
+  double CO;
+  double NO2;
+  double O3;
+  if (CO_PRESENT) {
+    CO = getGasConc(CO_MENB, CO_M, 2.0); 
+  }
+  if (NO2_PRESENT) {
+    NO2 = getGasConc(NO2_MENB, NO2_M, 0.3);
+  }
+  if (O3_PRESENT) {
+    O3 = getGasConc(O3_MENB,  O3_M, 0.3);
+  }
   double temp;
   double hum;
   DHT22_ERROR_t errorCode = myDHT22.readData();
@@ -349,14 +387,14 @@ void loop() {
     client.println();   
   } else {
     lcd_print_top("Could not post ");
-    lcd_print_bottom("to Xively!");
-    //Serial.println(F("Connection failed")); 
+    lcd_print_bottom("to Xively!"); 
     client.close();
     delay(1000);   
     _reset();
   }
-  //Serial.print(SDdata);
-//Cycle through readings? loop1:CO loop2:NO2 loop3:O3 loop4:temp loop5:hum  
+
+//Cycle through readings to display on LCD screen
+//loop1:CO loop2:NO2 loop3:O3 loop4:temp loop5:hum  
 switch (flag) {
   case 0: {  
     lcd_print_top("    CO value");
@@ -401,19 +439,13 @@ switch (flag) {
 }
 flag++;
 flag %= 5;
-  
-    //Serial.println(F("-------------------------------------"));
-    //wdt_reset();    
-    while (client.connected()) {
-      //wdt_reset();      
-      while (client.available()) {     
-        //wdt_reset();        
+   
+    while (client.connected()) {    
+      while (client.available()) {            
         char c = client.read();
         //Serial.print(c);
       }
-    }  
-    
-    //wdt_reset();  
+    }   
     client.close();
     delay(500);    
 }
@@ -428,16 +460,16 @@ void lcd_print_bottom(char* string) {
   lcd.print(string);
 }
 
-double getGasConc(int channel, double M, double L){
-  MCP.Configuration(channel,18,0,1);
+double getGasConc(int menb, double M, double L){
+  digitalWrite(menb, LOW);
+  MCP.Configuration(0,18,0,1);
+  //all MCP have same address...
   MCP.NewConversion();
   double v = MCP.Measure();
-  v /= 1000000.0;
+  digitalWrite(menb, HIGH);
+  v /= 1000000.0; //convert from uV to V
   v /= M;
-  //Serial.print("Concentration = ");
-  //Serial.print(v);
-  //Serial.println(" ppm");
-  if (v < L) {
+  if (v < L) { //filter results
     return 0.00;
   }
   return v;
@@ -452,22 +484,16 @@ boolean attemptSmartConfigReconnect(void){
   //Serial.println(1);
   if (!cc3000.begin(false, true))
   {
-    //Serial.println(2);
     lcd_print_top("Can’t connect wi");
     lcd_print_bottom("th saved details");
-    //wdt_reset();
-    //Serial.println(F("Unable to re-connect!? Did you run the SmartConfigCreate"));
-    //Serial.println(F("sketch to store your connection details?"));
     return false;
   }
   
   /* Round of applause! */
   lcd_print_top("Reconnected!");
-  //Serial.println(F("Reconnected!"));
-  //wdt_reset();
+
   /* Wait for DHCP to complete */
   lcd_print_bottom("Requesting DHCP");
-  //Serial.println(F("\nRequesting DHCP"));
   time = 0;
   while (!cc3000.checkDHCP()) {
     delay(100);
@@ -475,10 +501,9 @@ boolean attemptSmartConfigReconnect(void){
     if (time%2000 == 0) {
         tinyWDT.pet();
       }
-    if (time > 10000) {
+    if (time > 20000) {
       lcd_print_top("DHCP failed!");
       delay(500);
-      //Serial.println(F("DHCP failed!"));
       return false;
     }
   }  
@@ -488,7 +513,6 @@ boolean attemptSmartConfigReconnect(void){
 boolean attemptSmartConfigCreate(void){
   /* Initialise the module, deleting any existing profile data (which */
   /* is the default behaviour)  */
-  //Serial.println(F("\nInitialising the CC3000 ..."));
   lcd_print_top("Creating new ");
   lcd_print_bottom("connection...");
   if (!cc3000.begin(false))
@@ -498,19 +522,15 @@ boolean attemptSmartConfigCreate(void){
   
   /* Try to use the smart config app (no AES encryption), saving */
   /* the connection details if we succeed */
-  //Serial.println(F("Waiting for a SmartConfig connection (~60s) ..."));
   if (!cc3000.startSmartConfig(false))
   {
     lcd_print_top("Failed!");
     delay(1000);
-    //Serial.println(F("SmartConfig failed"));
     return false;
   }
-  
- // Serial.println(F("Saved connection details and connected to AP!"));
   lcd_print_top("Connection saved!");
   //do not request DHCP, since we will be resetting the device anyways 
-  
+  //"normal" smartconfig create pattern would request DHCP here 
   return true;
 }
 
