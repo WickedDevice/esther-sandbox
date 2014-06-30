@@ -13,7 +13,7 @@ Basic smartconfig reconnect method
 #include <stdlib.h>
 #include <WildFire.h>
 
-WildFire wf(WILDFIRE_V2);
+WildFire wf;
 
 #define soft_reset()        \
 do                          \
@@ -32,7 +32,7 @@ void wdt_init(void)
     return;
 }
 
-WildFire_CC3000 cc3000(WILDFIRE_V2);
+WildFire_CC3000 cc3000;
 int sm_button = 5;
 int time = 0;
 uint32_t ip;
