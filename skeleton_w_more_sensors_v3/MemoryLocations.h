@@ -3,6 +3,9 @@
 
 #define MCUSR_ADDRESS 0 //one byte to save value of MCUSR at startup
 #define MAC_ADDRESS  1 //6 bytes
+/*
+tinyWDT_STATUS: 0x0 = initial state; 0x37 = initiate smartconfig; 0x5b = skip smartconfig timer (and initiate sensor warmup); 
+*/
 #define tinyWDT_STATUS	7 //one byte for status info
 #define ACTIVATION_STATUS_EEPROM_ADDRESS 8  // one byte with a magic value
 #define API_KEY_EEPROM_ADDRESS           9  // API KEY IS 48 characters + 1 for null terminator = 49 bytes

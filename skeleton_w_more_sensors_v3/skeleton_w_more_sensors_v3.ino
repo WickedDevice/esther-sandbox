@@ -28,9 +28,9 @@
 WildFire wf;
 WildFire_CC3000 cc3000;
 WildFire_CC3000_Client client;
-int sm_button = 27;
-DHT22 myDHT22(24); //A2
-LiquidCrystal lcd(2,3, 4,5,6,8);
+int sm_button = A3; //A3
+DHT22 myDHT22(A0); //A0
+LiquidCrystal lcd(A2,A1, 4,5,6,8);
 MCP3424 MCP(6);
 TinyWatchdog tinyWDT(14);
 
@@ -64,14 +64,16 @@ uint8_t CO_PRESENT = 0;
 uint8_t NO2_PRESENT = 0;
 uint8_t O3_PRESENT = 0;
 
-#define particulate1 25
-#define particulate2 24
+//TODO: replace with better names
+#define particulate1 2
+#define particulate2 3
 
 #define PROVISIONING_STATUS_GOOD 0x73
 char api_key[API_KEY_LENGTH];
 char feedID[FEED_ID_LENGTH];
 int flag = 0;
-
+void initialize_eeprom(void);
+void printDouble(double val, byte precision);
 
 unsigned long previousMillis = 0;
 long interval = 4000;
@@ -84,6 +86,13 @@ tinyWDT_STATUS: 0x0 = initial state; 0x37 = initiate smartconfig; 0x5b = skip sm
 
 char packet_buffer[2048];
 #define BUFSIZE 511
+
+void setupTimer2Interrupt(void);
+void updateCounts(void);
+uint32_t num_ones1 = 0;
+uint32_t num_zeros1 = 0;
+uint32_t num_ones2 = 0;
+uint32_t num_zeros2 = 0;
 
 void setup(void)
 {  
@@ -256,6 +265,12 @@ void loop() {
     previousMillis = currentMillis;
     tinyWDT.pet();
   }
+  cli();
+  int a1 = num_zeros1;
+  int a2 = num_zeros2;
+  sei();
+  updateCounts();
+  
   client = cc3000.connectTCP(ip, 80);
 
   //from ADC
@@ -334,6 +349,15 @@ void loop() {
   strcat_P(data, PSTR("\"},"));
   strcat_P(data, PSTR("{\"id\" : \"O3\",\"current_value\" : \""));
   strcat(data, dtostrf(O3, 5, 3, dbuf));
+  
+  strcat_P(data, PSTR("\"},"));
+  strcat_P(data, PSTR("{\"id\" : \"Small_particulate\",\"current_value\" : \""));
+  strcat(data, itoa(a1, dbuf, DEC));
+  
+  strcat_P(data, PSTR("\"},"));
+  strcat_P(data, PSTR("{\"id\" : \"Large_particulate\",\"current_value\" : \""));
+  strcat(data, itoa(a2,dbuf, DEC));
+  
   //strcat(SDdata, dbuf);
   //strcat_P(SDdata, PSTR(","));
   if (errorCode == DHT_ERROR_NONE) {
@@ -396,6 +420,7 @@ void loop() {
 
 //Cycle through readings to display on LCD screen
 //loop1:CO loop2:NO2 loop3:O3 loop4:temp loop5:hum  
+//TODO: add particulate 
 switch (flag) {
   case 0: {  
     lcd_print_top("    CO value");
@@ -462,12 +487,12 @@ void lcd_print_bottom(char* string) {
 }
 
 double getGasConc(int menb, double M, double L){
-  digitalWrite(menb, LOW);
+  digitalWrite(menb, HIGH);
   MCP.Configuration(0,18,0,1);
   //all MCP have same address...
   MCP.NewConversion();
   double v = MCP.Measure();
-  digitalWrite(menb, HIGH);
+  digitalWrite(menb, LOW);
   v /= 1000000.0; //convert from uV to V
   v /= M;
   if (v < L) { //filter results
@@ -548,167 +573,3 @@ void _reset(void) {
    tinyWDT.force_reset();
    delay(1000);
 }
-
-/*
-*  Checks EEPROM to see if egg already has calibration data
-*/
-void initialize_eeprom() {
-  unsigned long currentMillis = millis();
-  if (currentMillis - previousMillis > interval) {
-    previousMillis = currentMillis;
-    tinyWDT.pet();
-  }
-   long magic;
-  eeprom_read_block(&magic, (const void*)CAL_MAGIC, sizeof(float));
-  if(magic != magic_number) {
-    Serial.println("\nSetting sensor calibration values....");
-    _initialize_eeprom();
-  }
-  else {
-    Serial.println("It looks like this egg has already been programmed with calibration data!");
-    Serial.println();    
-    eeprom_read_block(&CO_M, (const void*)CO_cal, sizeof(float));
-    eeprom_read_block(&NO2_M, (const void*)NO2_cal, sizeof(float));
-    eeprom_read_block(&O3_M, (const void*)O3_cal, sizeof(float));
-    Serial.println("The current values are :");
-    Serial.print("CO sensor : "); printDouble(CO_M, 6); Serial.println();
-    Serial.print("NO2 sensor : "); printDouble(NO2_M, 6); Serial.println();
-    Serial.print("O3 sensor : "); printDouble(O3_M, 6); Serial.println();
-    Serial.println();
-    Serial.println("Would you like to reset these values? Current data will be overwritten! (y/n)");
-    while(Serial.available() <= 0) {
-      unsigned long currentMillis = millis();
-      if (currentMillis - previousMillis > interval) {
-        previousMillis = currentMillis;
-        tinyWDT.pet();
-      }
-    }
-    if (Serial.available() > 0) {
-      char response = Serial.read();
-      if (response == 'y') {
-        _initialize_eeprom();
-      }
-    }   
-  }
-  Serial.println();
-}
-int done = 0;
-/*
-*  Takes user input from serial monitor and writes those values to EEPROM
-*/
-void _initialize_eeprom() {
-  while (!done) {
-    Serial.println();
-    Serial.println("IMPORTANT: Please include the leading 0 before the decimal point.");
-    Serial.println();
-    Serial.println("Enter calibration value for the CO sensor: ");
-    while(Serial.available() <= 0) {
-      unsigned long currentMillis = millis();
-      if (currentMillis - previousMillis > interval) {
-        previousMillis = currentMillis;
-        tinyWDT.pet();
-      }
-    }
-      if (Serial.available() > 0) {
-        CO_M = Serial.parseFloat();
-      }
-    Serial.println("Enter calibration value for the NO2 sensor: ");
-    while(Serial.available() <= 0) {
-      unsigned long currentMillis = millis();
-      if (currentMillis - previousMillis > interval) {
-        previousMillis = currentMillis;
-        tinyWDT.pet();
-      }
-    }
-    if (Serial.available() > 0) {
-      NO2_M = Serial.parseFloat();
-    }
-    Serial.println("Enter calibration value for the O3 sensor: ");
-    while(Serial.available() <= 0) {
-      unsigned long currentMillis = millis();
-      if (currentMillis - previousMillis > interval) {
-        previousMillis = currentMillis;
-        tinyWDT.pet();
-      }
-    }
-    if (Serial.available() > 0) {
-      O3_M = Serial.parseFloat();
-    }
-    Serial.print("CO sensor : ");
-    printDouble(CO_M, 6);
-    Serial.println();
-    Serial.print("NO2 sensor : ");
-    printDouble(NO2_M, 6);
-    Serial.println();
-    Serial.print("O3 sensor : ");
-    printDouble(O3_M, 6);
-    Serial.println();
-    Serial.println("Are these values correct? (y/n)");
-    while(Serial.available() <= 0) {
-    unsigned long currentMillis = millis();
-      if (currentMillis - previousMillis > interval) {
-        previousMillis = currentMillis;
-        tinyWDT.pet();
-      }
-    }
-    char response;
-    if (Serial.available() > 0) {
-      response = Serial.read();
-    }
-    if (response == 'y') {
-      eeprom_write_block(&CO_M, (void*)CO_cal, sizeof(float));
-      eeprom_write_block(&NO2_M, (void*)NO2_cal, sizeof(float));
-      eeprom_write_block(&O3_M, (void*)O3_cal, sizeof(float));
-      eeprom_write_block(&magic_number, (void*)CAL_MAGIC, sizeof(long));
-      eeprom_read_block(&CO_M, (const void*)CO_cal, sizeof(float));
-      eeprom_read_block(&NO2_M, (const void*)NO2_cal, sizeof(float));
-      eeprom_read_block(&O3_M, (const void*)O3_cal, sizeof(float));
-      Serial.println();
-      Serial.println("Wrote calibration data :");
-      Serial.print("CO sensor : ");
-      printDouble(CO_M, 6);
-      Serial.println();
-      Serial.print("NO2 sensor : ");
-      printDouble(NO2_M, 6);
-      Serial.println();
-      Serial.print("O3 sensor : ");
-      printDouble(O3_M, 6);
-      Serial.println();
-      Serial.println();
-      done = 1;
-    }
-    else {
-      done = 0;
-    }
-  }
-}
-
-void printDouble( double val, byte precision){
-// prints val with number of decimal places determine by precision
-// NOTE: precision is 1 followed by the number of zeros for the desired number of decimial places
-// example: printDouble( 3.1415, 100); // prints 3.14 (two decimal places)
-  if (val < 0 && val > -1) {
-    Serial.print("-");
-  }
-  Serial.print (int(val));  //prints the int part
-  if( precision > 0) {
-    Serial.print("."); // print the decimal point
-    unsigned long frac;
-    unsigned long mult = 1;
-    byte padding = precision -1;
-    while(precision--)
-       mult *=10;
-       
-    if(val >= 0)
-      frac = (val - int(val)) * mult;
-    else
-      frac = (int(val)- val ) * mult;
-    unsigned long frac1 = frac;
-    while( frac1 /= 10 )
-      padding--;
-    while(  padding--)
-      Serial.print("0");
-    Serial.print(frac,DEC) ;
-  }
-} 
-
