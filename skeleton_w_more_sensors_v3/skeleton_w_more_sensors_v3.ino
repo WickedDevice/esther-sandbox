@@ -4,11 +4,12 @@
 *  Using external 18-bit differential ADC
 *  Prints status messages to LCD screen
 *  TODO: Remove all debug serial monitor related code
-*  TODO: Add local data storage option (SD card)
-*  TODO: Add code to check for presence of sensor
+*  TODO: Add local data storage option (SD card) -- drop for now?
+*  TODO: Add code to check for presence of sensor -- test
 *  TODO: Add detection for sensor warmup period (need MCUSR)
-*  TODO: Tweak duration of warmup period
-*  TODO: Integrate particulate sensor
+*  TODO: Tweak duration of warmup period -- not necessary
+*  TODO: Integrate particulate sensor -- done?
+*  TODO: Change ADC resolution to 16-bit for better sample rate, add moving average (50 samples) -- done
 **************************/
 
 #include <SPI.h>
@@ -34,7 +35,11 @@ LiquidCrystal lcd(A2,A1, 4,5,6,8);
 MCP3424 MCP(6);
 TinyWatchdog tinyWDT(14);
 
-
+#define TIACN_REG_VAL 0x1c
+#define CO_REFCN 0x91
+#define NO2_REFCN 0xd5
+#define O3_REFCN 0xd1
+#define MODECN_REG_VAL 0x03
 
 // Security can be WLAN_SEC_UNSEC, WLAN_SEC_WEP, WLAN_SEC_WPA or WLAN_SEC_WPA2
 #define WLAN_SECURITY   WLAN_SEC_WPA2
@@ -57,9 +62,9 @@ const long magic_number = 0x5485;
 #define CO_MENB 7
 #define NO2_MENB 9
 #define O3_MENB 10
-LMP91000 CO_LMP(CO_MENB, type_CO);
-LMP91000 NO2_LMP(NO2_MENB, type_NO2);
-LMP91000 O3_LMP(O3_MENB, type_O3);
+LMP91000 CO_LMP(CO_MENB, TIACN_REG_VAL, CO_REFCN, MODECN_REG_VAL);
+LMP91000 NO2_LMP(NO2_MENB, TIACN_REG_VAL, NO2_REFCN, MODECN_REG_VAL);
+LMP91000 O3_LMP(O3_MENB, TIACN_REG_VAL, O3_REFCN, MODECN_REG_VAL);
 uint8_t CO_PRESENT = 0;
 uint8_t NO2_PRESENT = 0;
 uint8_t O3_PRESENT = 0;
@@ -208,20 +213,34 @@ void setup(void)
   }
 
   //read all constants whether they are there or not
+  //if the sensor module is not detected, the value will not be used anyways
   eeprom_read_block(&CO_M, (const void*)CO_cal, sizeof(float));
   eeprom_read_block(&NO2_M, (const void*)NO2_cal, sizeof(float));
   eeprom_read_block(&O3_M, (const void*)O3_cal, sizeof(float));
   
+  pinMode(CO_MENB, OUTPUT);
+  pinMode(NO2_MENB, OUTPUT);
+  pinMode(O3_MENB, OUTPUT);
+  
   //configure LMP91000
+  //menb is now active high (I2C duplicator)
+  digitalWrite(CO_MENB, HIGH);
   if (CO_LMP.begin()) {
     CO_PRESENT = 1;
   }
+  digitalWrite(CO_MENB, LOW);
+  delay(100);
+  digitalWrite(NO2_MENB, HIGH);
   if (NO2_LMP.begin()) {
     NO2_PRESENT = 1;
   }
+  digitalWrite(NO2_MENB, LOW);
+  delay(100);
+  digitalWrite(O3_MENB, HIGH);
   if (O3_LMP.begin()) {
     O3_PRESENT = 1;
   }
+  digitalWrite(O3_MENB, LOW);
   
   //configure particulate sensor (later will be replaced by global initialization)
   pinMode(particulate1, INPUT);
@@ -266,8 +285,8 @@ void loop() {
     tinyWDT.pet();
   }
   cli();
-  int a1 = num_zeros1;
-  int a2 = num_zeros2;
+  double a1 = (double)num_zeros1/ 100.0;
+  double a2 = (double)num_zeros2 / 100.0;
   sei();
   updateCounts();
   
@@ -334,46 +353,37 @@ void loop() {
   char dbuf[10] = "";
   #define DATA_MAX_LENGTH 512
   char data[DATA_MAX_LENGTH] = "\n";
-  //char SDdata[DATA_MAX_LENGTH];
-  //sprintf(SDdata, itoa(currTime, dbuf, DEC));
-  //strcat_P(SDdata, PSTR(","));
+  
+  //KWJ sensor
   strcat_P(data, PSTR("{\"version\":\"1.0.0\",\"datastreams\" : [{\"id\" : \"CO\",\"current_value\" : \"")); 
   strcat(data,dtostrf(CO, 5, 3, dbuf)); 
-  //strcat(SDdata, dbuf);
-  //strcat_P(SDdata, PSTR(","));
   strcat_P(data, PSTR("\"},"));
   strcat_P(data, PSTR("{\"id\" : \"NO2\",\"current_value\" : \""));
   strcat(data, dtostrf(NO2, 5, 3, dbuf));
-  //strcat(SDdata, dbuf);
-  //strcat_P(SDdata, PSTR(","));
   strcat_P(data, PSTR("\"},"));
   strcat_P(data, PSTR("{\"id\" : \"O3\",\"current_value\" : \""));
   strcat(data, dtostrf(O3, 5, 3, dbuf));
   
+  //particulate
   strcat_P(data, PSTR("\"},"));
   strcat_P(data, PSTR("{\"id\" : \"Small_particulate\",\"current_value\" : \""));
-  strcat(data, itoa(a1, dbuf, DEC));
-  
+  strcat(data, dtostrf(a1, 5, 3, dbuf));  
   strcat_P(data, PSTR("\"},"));
   strcat_P(data, PSTR("{\"id\" : \"Large_particulate\",\"current_value\" : \""));
-  strcat(data, itoa(a2,dbuf, DEC));
+  strcat(data, dtostrf(a2,5, 3, dbuf));
   
-  //strcat(SDdata, dbuf);
-  //strcat_P(SDdata, PSTR(","));
+  //DHT22
   if (errorCode == DHT_ERROR_NONE) {
     strcat_P(data, PSTR("\"},"));
     strcat_P(data, PSTR("{\"id\" : \"Temperature\",\"current_value\" : \""));
     strcat(data, dtostrf(temp, 5, 3, dbuf));
-    //strcat(SDdata, dbuf);
-    //strcat_P(SDdata, PSTR(","));
     strcat_P(data, PSTR("\"},"));
     strcat_P(data, PSTR("{\"id\" : \"Humidity\",\"current_value\" : \""));
     strcat(data, dtostrf(hum, 5, 3, dbuf));
-    //strcat(SDdata, dbuf);
-    //strcat_P(SDdata, PSTR(","));
   }
-  //strcat_P(SDdata, PSTR("\n"));
   strcat_P(data, PSTR("\"},"));
+  
+  //liveness
   liveness++;
   strcat_P(data, PSTR("{\"id\" : \"Liveness\",\"current_value\" : \""));
   itoa(liveness, dbuf, DEC);
@@ -462,9 +472,21 @@ switch (flag) {
     }
     break;
   }
+  case 5: {
+    lcd_print_top("Small particles");
+    lcd.setCursor(5,1);
+    lcd.print(a1); lcd.print(" %");
+    break;
+  }
+  case 6: {
+    lcd_print_top("Large particles");
+    lcd.setCursor(5,1);
+    lcd.print(a2); lcd.print(" %");
+    break;
+  }
 }
 flag++;
-flag %= 5;
+flag %= 7;
    
     while (client.connected()) {    
       while (client.available()) {            
@@ -488,10 +510,20 @@ void lcd_print_bottom(char* string) {
 
 double getGasConc(int menb, double M, double L){
   digitalWrite(menb, HIGH);
-  MCP.Configuration(0,18,0,1);
+  MCP.Configuration(0,16,1,1); //16-bit resolution, 15 SPS, continuous mode for running average
   //all MCP have same address...
-  MCP.NewConversion();
-  double v = MCP.Measure();
+  //MCP.NewConversion();
+  double v = 0;
+  for (int i = 0; i < 50; i++) {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis > interval) {
+      previousMillis = currentMillis;
+      tinyWDT.pet();
+    }
+    v += MCP.Measure();
+  }
+  v /= 50.0;
+  MCP.Configuration(0,16,0,1); //change back to one-shot conversion to save power while other sensors are being read
   digitalWrite(menb, LOW);
   v /= 1000000.0; //convert from uV to V
   v /= M;
