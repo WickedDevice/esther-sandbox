@@ -1,10 +1,8 @@
 #include "LMP91000.h"
 
-LMP91000::LMP91000(uint8_t menb_pin, uint8_t tiacn, uint8_t refcn, uint8_t modecn) {
+LMP91000::LMP91000(uint8_t menb_pin) {
 	_menb = menb_pin;
-	_tiacn = tiacn;
-	_refcn = refcn;
-	_modecn = modecn;
+
 }
 
 //assumes menb is handled correctly
@@ -30,7 +28,10 @@ uint8_t LMP91000::status(void) {
 }	
 	
 	//move enable handling to main, out of library
-bool LMP91000::begin() {		
+bool LMP91000::begin(uint8_t tiacn, uint8_t refcn, uint8_t modecn) {	
+	_tiacn = tiacn;
+	_refcn = refcn;
+	_modecn = modecn;	
 	Wire.begin();
 	//check if ready
 	//uint8_t ready = 0;

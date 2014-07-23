@@ -27,8 +27,8 @@
 class LMP91000 {
 
 public:
-	LMP91000(uint8_t _menb, uint8_t tiacn, uint8_t refcn, uint8_t modecn);
-	bool begin(void);
+	LMP91000(uint8_t _menb);
+	bool begin(uint8_t tiacn, uint8_t refcn, uint8_t modecn);
 	void write(uint8_t reg, uint8_t data);
 	uint8_t status(void);
 	
