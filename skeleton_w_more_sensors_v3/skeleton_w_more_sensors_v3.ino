@@ -62,9 +62,9 @@ const long magic_number = 0x5485;
 #define CO_MENB 7
 #define NO2_MENB 9
 #define O3_MENB 10
-LMP91000 CO_LMP(CO_MENB, TIACN_REG_VAL, CO_REFCN, MODECN_REG_VAL);
-LMP91000 NO2_LMP(NO2_MENB, TIACN_REG_VAL, NO2_REFCN, MODECN_REG_VAL);
-LMP91000 O3_LMP(O3_MENB, TIACN_REG_VAL, O3_REFCN, MODECN_REG_VAL);
+LMP91000 CO_LMP(CO_MENB);
+LMP91000 NO2_LMP(NO2_MENB);
+LMP91000 O3_LMP(O3_MENB);
 uint8_t CO_PRESENT = 0;
 uint8_t NO2_PRESENT = 0;
 uint8_t O3_PRESENT = 0;
@@ -225,19 +225,19 @@ void setup(void)
   //configure LMP91000
   //menb is now active high (I2C duplicator)
   digitalWrite(CO_MENB, HIGH);
-  if (CO_LMP.begin()) {
+  if (CO_LMP.begin(TIACN_REG_VAL, CO_REFCN, MODECN_REG_VAL)) {
     CO_PRESENT = 1;
   }
   digitalWrite(CO_MENB, LOW);
   delay(100);
   digitalWrite(NO2_MENB, HIGH);
-  if (NO2_LMP.begin()) {
+  if (NO2_LMP.begin(TIACN_REG_VAL, NO2_REFCN, MODECN_REG_VAL)) {
     NO2_PRESENT = 1;
   }
   digitalWrite(NO2_MENB, LOW);
   delay(100);
   digitalWrite(O3_MENB, HIGH);
-  if (O3_LMP.begin()) {
+  if (O3_LMP.begin(TIACN_REG_VAL, O3_REFCN, MODECN_REG_VAL)) {
     O3_PRESENT = 1;
   }
   digitalWrite(O3_MENB, LOW);
