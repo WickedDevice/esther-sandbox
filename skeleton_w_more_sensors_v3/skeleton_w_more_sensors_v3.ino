@@ -29,11 +29,11 @@
 WildFire wf;
 WildFire_CC3000 cc3000;
 WildFire_CC3000_Client client;
-int sm_button = A3; //A3
-DHT22 myDHT22(A0); //A0
-LiquidCrystal lcd(A2,A1, 4,5,6,8);
+int sm_button = A0; //A3
+DHT22 myDHT22(A1); //A0
+LiquidCrystal lcd(A3,A2, 4,5,6,8);
 MCP3424 MCP(6);
-TinyWatchdog tinyWDT(14);
+TinyWatchdog tinyWDT;
 
 #define TIACN_REG_VAL 0x1c
 #define CO_REFCN 0x91
@@ -46,15 +46,10 @@ TinyWatchdog tinyWDT(14);
 
 // Xively parameters
 #define WEBSITE  "api.xively.com"
-//#define API_key  "aNMDa3DHcW9XqQUmuFQ7HrbKLqcmVO1dHBWPAQRcng9qHhft"
-//#define feedID   "1293806464"
 
 int time = 0;
 uint32_t ip;
 
-//#define CO_chan 1
-//#define NO2_chan 2
-//#define O3_chan 3
 double CO_M;
 double NO2_M;
 double O3_M;
@@ -247,7 +242,8 @@ void setup(void)
   pinMode(particulate2, INPUT);
   
   //TODO: this conditional statement depends on the value of MCUSR and tinyWDT status
-  if (1) {
+  uint8_t mcusr_stat = eeprom_read_byte((const uint8_t*)MCUSR_ADDRESS);
+  if ((mcusr_stat & 1) || (smc_status == 0x5b)) {
     lcd_print_top("Initializing");
     lcd_print_bottom("sensors... 15:00"); //can probably cut this down to 12 min?
     delay(1000);
