@@ -118,8 +118,8 @@ void setup(void)
     eeprom_write_byte((uint8_t*)tinyWDT_STATUS, 0); 
     liveness = 0;
     pinMode(sm_button, INPUT_PULLUP);
-    time = 10;
-    lcd_print_top("Reconnecting...");
+    time = 11;
+    lcd_print_top("Connecting...");
   }
   else {
     //Startup as normal
@@ -163,7 +163,6 @@ void setup(void)
       }
     }
   if (time >= 10) {  
-    //lcd_print_top("Reconnecting... ");
     if(!attemptSmartConfigReconnect()){
       lcd_print_bottom("Failed!");
       cc3000.disconnect();
@@ -217,7 +216,7 @@ void setup(void)
   pinMode(NO2_MENB, OUTPUT);
   pinMode(O3_MENB, OUTPUT);
   
-  //configure LMP91000
+  //configure LMP91000 and check for sensor module presence
   //menb is now active high (I2C duplicator)
   digitalWrite(CO_MENB, HIGH);
   if (CO_LMP.begin(TIACN_REG_VAL, CO_REFCN, MODECN_REG_VAL)) {
@@ -245,7 +244,7 @@ void setup(void)
   uint8_t mcusr_stat = eeprom_read_byte((const uint8_t*)MCUSR_ADDRESS);
   if ((mcusr_stat & 1) || (smc_status == 0x5b)) {
     lcd_print_top("Initializing");
-    lcd_print_bottom("sensors... 15:00"); //can probably cut this down to 12 min?
+    lcd_print_bottom("sensors... 15:00");
     delay(1000);
     //15 min sensor warmup
     time = 0;
@@ -280,6 +279,8 @@ void loop() {
     previousMillis = currentMillis;
     tinyWDT.pet();
   }
+  
+  //update reading from dust sensor
   cli();
   double a1 = (double)num_zeros1/ 100.0;
   double a2 = (double)num_zeros2 / 100.0;
@@ -288,8 +289,7 @@ void loop() {
   
   client = cc3000.connectTCP(ip, 80);
 
-  //from ADC
-  //TODO: check for presence of sensor
+  //get sensor readings
   int currTime = millis();
   double CO;
   double NO2;
@@ -306,7 +306,8 @@ void loop() {
   double temp;
   double hum;
   DHT22_ERROR_t errorCode = myDHT22.readData();
-  char tempbuf_bot[17] = "";
+  char tempbuf[17] = "";
+  //Read from DHT22 if no error
   switch(errorCode)
   {
     case DHT_ERROR_NONE: {
@@ -315,31 +316,31 @@ void loop() {
       break;
     }
     case DHT_ERROR_CHECKSUM: {
-      sprintf(tempbuf_bot, "checksum error ");
+      sprintf(tempbuf, "checksum error ");
       break;
     }
     case DHT_BUS_HUNG: {
-      sprintf(tempbuf_bot, "    BUS Hung ");
+      sprintf(tempbuf, "    BUS Hung ");
       break;
     }
     case DHT_ERROR_NOT_PRESENT: {
-      sprintf(tempbuf_bot, "  Not Present ");
+      sprintf(tempbuf, "  Not Present ");
       break;
     }
     case DHT_ERROR_ACK_TOO_LONG: {
-      sprintf(tempbuf_bot, "  ACK time out ");
+      sprintf(tempbuf, "  ACK time out ");
       break;
     }
     case DHT_ERROR_SYNC_TIMEOUT: {
-      sprintf(tempbuf_bot, "  Sync Timeout ");
+      sprintf(tempbuf, "  Sync Timeout ");
       break;
     }
     case DHT_ERROR_DATA_TIMEOUT: {
-      sprintf(tempbuf_bot, "  Data Timeout ");
+      sprintf(tempbuf, "  Data Timeout ");
       break;
     }
     case DHT_ERROR_TOOQUICK: {
-      sprintf(tempbuf_bot, " Polled too quick ");
+      sprintf(tempbuf, " Polled too quick ");
       break;
     }
   }
@@ -351,33 +352,43 @@ void loop() {
   char data[DATA_MAX_LENGTH] = "\n";
   
   //KWJ sensor
-  strcat_P(data, PSTR("{\"version\":\"1.0.0\",\"datastreams\" : [{\"id\" : \"CO\",\"current_value\" : \"")); 
-  strcat(data,dtostrf(CO, 5, 3, dbuf)); 
-  strcat_P(data, PSTR("\"},"));
-  strcat_P(data, PSTR("{\"id\" : \"NO2\",\"current_value\" : \""));
-  strcat(data, dtostrf(NO2, 5, 3, dbuf));
-  strcat_P(data, PSTR("\"},"));
-  strcat_P(data, PSTR("{\"id\" : \"O3\",\"current_value\" : \""));
-  strcat(data, dtostrf(O3, 5, 3, dbuf));
+  strcat_P(data, PSTR("{\"version\":\"1.0.0\",\"datastreams\" :");
+  if (CO_PRESENT) {
+    strcat_P(data, PSTR("[{\"id\" : \"CO\",\"current_value\" : \"")); 
+    strcat(data,dtostrf(CO, 5, 3, dbuf)); 
+    strcat_P(data, PSTR("\"},"));
+  }
+  if (NO2_PRESENT) {
+    strcat_P(data, PSTR("{\"id\" : \"NO2\",\"current_value\" : \""));
+    strcat(data, dtostrf(NO2, 5, 3, dbuf));
+    strcat_P(data, PSTR("\"},"));
+  }
+  if (O3_PRESENT) {
+    strcat_P(data, PSTR("{\"id\" : \"O3\",\"current_value\" : \""));
+    strcat(data, dtostrf(O3, 5, 3, dbuf));
+    strcat_P(data, PSTR("\"},"));
+  }
   
-  //particulate
-  strcat_P(data, PSTR("\"},"));
-  strcat_P(data, PSTR("{\"id\" : \"Small_particulate\",\"current_value\" : \""));
-  strcat(data, dtostrf(a1, 5, 3, dbuf));  
-  strcat_P(data, PSTR("\"},"));
-  strcat_P(data, PSTR("{\"id\" : \"Large_particulate\",\"current_value\" : \""));
-  strcat(data, dtostrf(a2,5, 3, dbuf));
+  //particulate  
+  if ((num_zeros1 + num_ones1) > 0) { //I suspect this will not work as intended... is there any way to confirm presence of sensor?
+    strcat_P(data, PSTR("{\"id\" : \"Small_particulate\",\"current_value\" : \""));
+    strcat(data, dtostrf(a1, 5, 3, dbuf));  
+    strcat_P(data, PSTR("\"},"));
+    strcat_P(data, PSTR("{\"id\" : \"Large_particulate\",\"current_value\" : \""));
+    strcat(data, dtostrf(a2,5, 3, dbuf));
+    strcat_P(data, PSTR("\"},"));
+  }
   
   //DHT22
-  if (errorCode == DHT_ERROR_NONE) {
-    strcat_P(data, PSTR("\"},"));
+  if (errorCode == DHT_ERROR_NONE) {   
     strcat_P(data, PSTR("{\"id\" : \"Temperature\",\"current_value\" : \""));
     strcat(data, dtostrf(temp, 5, 3, dbuf));
     strcat_P(data, PSTR("\"},"));
     strcat_P(data, PSTR("{\"id\" : \"Humidity\",\"current_value\" : \""));
     strcat(data, dtostrf(hum, 5, 3, dbuf));
+    strcat_P(data, PSTR("\"},"));
   }
-  strcat_P(data, PSTR("\"},"));
+  
   
   //liveness
   liveness++;
@@ -453,7 +464,7 @@ switch (flag) {
       lcd.print(temp); lcd.print(" C");
     }
     else {
-      lcd_print_bottom(tempbuf_bot);
+      lcd_print_bottom(tempbuf);
     }
     break;
   }
@@ -464,7 +475,7 @@ switch (flag) {
       lcd.print(hum); lcd.print(" %");
     }
     else {
-      lcd_print_bottom(tempbuf_bot);
+      lcd_print_bottom(tempbuf);
     }
     break;
   }
