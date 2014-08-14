@@ -3,13 +3,9 @@
 *  All sensors are connected (including DHT22), posting to Xively
 *  Using external 18-bit differential ADC
 *  Prints status messages to LCD screen
-*  TODO: Remove all debug serial monitor related code
 *  TODO: Add local data storage option (SD card) -- drop for now?
 *  TODO: Add code to check for presence of sensor -- test
 *  TODO: Add detection for sensor warmup period (need MCUSR)
-*  TODO: Tweak duration of warmup period -- not necessary
-*  TODO: Integrate particulate sensor -- done?
-*  TODO: Change ADC resolution to 16-bit for better sample rate, add moving average (50 samples) -- done
 **************************/
 
 #include <SPI.h>
@@ -26,13 +22,15 @@
 #include <lmp91000.h>
 #include "MemoryLocations.h"
 
+#define DUST_SENSOR 1
+
 WildFire wf;
 WildFire_CC3000 cc3000;
 WildFire_CC3000_Client client;
-int sm_button = A0; //A3
-DHT22 myDHT22(A1); //A0
+int sm_button = A0;
+DHT22 myDHT22(A1);
 LiquidCrystal lcd(A3,A2, 4,5,6,8);
-MCP3424 MCP(6);
+MCP3424 MCP(0);
 TinyWatchdog tinyWDT;
 
 #define TIACN_REG_VAL 0x1c
@@ -53,7 +51,7 @@ uint32_t ip;
 double CO_M;
 double NO2_M;
 double O3_M;
-const long magic_number = 0x5485;
+const long magic_number = 0x5485; //must match the magic number in the provisioning sketch
 #define CO_MENB 7
 #define NO2_MENB 9
 #define O3_MENB 10
@@ -64,7 +62,6 @@ uint8_t CO_PRESENT = 0;
 uint8_t NO2_PRESENT = 0;
 uint8_t O3_PRESENT = 0;
 
-//TODO: replace with better names
 #define particulate1 2
 #define particulate2 3
 
@@ -236,10 +233,12 @@ void setup(void)
   }
   digitalWrite(O3_MENB, LOW);
   
+#if DUST_SENSOR  
   //configure particulate sensor (later will be replaced by global initialization)
   pinMode(particulate1, INPUT);
   pinMode(particulate2, INPUT);
-  
+#endif
+
   //TODO: this conditional statement depends on the value of MCUSR and tinyWDT status
   uint8_t mcusr_stat = eeprom_read_byte((const uint8_t*)MCUSR_ADDRESS);
   if ((mcusr_stat & 1) || (smc_status == 0x5b)) {
@@ -281,12 +280,14 @@ void loop() {
   }
   
   //update reading from dust sensor
+#if DUST_SENSOR  
   cli();
   double a1 = (double)num_zeros1/ 100.0;
   double a2 = (double)num_zeros2 / 100.0;
   sei();
   updateCounts();
-  
+#endif
+
   client = cc3000.connectTCP(ip, 80);
 
   //get sensor readings
@@ -352,7 +353,7 @@ void loop() {
   char data[DATA_MAX_LENGTH] = "\n";
   
   //KWJ sensor
-  strcat_P(data, PSTR("{\"version\":\"1.0.0\",\"datastreams\" :");
+  strcat_P(data, PSTR("{\"version\":\"1.0.0\",\"datastreams\" :"));
   if (CO_PRESENT) {
     strcat_P(data, PSTR("[{\"id\" : \"CO\",\"current_value\" : \"")); 
     strcat(data,dtostrf(CO, 5, 3, dbuf)); 
@@ -370,14 +371,14 @@ void loop() {
   }
   
   //particulate  
-  if ((num_zeros1 + num_ones1) > 0) { //I suspect this will not work as intended... is there any way to confirm presence of sensor?
+#if DUST_SENSOR
     strcat_P(data, PSTR("{\"id\" : \"Small_particulate\",\"current_value\" : \""));
     strcat(data, dtostrf(a1, 5, 3, dbuf));  
     strcat_P(data, PSTR("\"},"));
     strcat_P(data, PSTR("{\"id\" : \"Large_particulate\",\"current_value\" : \""));
     strcat(data, dtostrf(a2,5, 3, dbuf));
     strcat_P(data, PSTR("\"},"));
-  }
+#endif
   
   //DHT22
   if (errorCode == DHT_ERROR_NONE) {   
@@ -437,8 +438,13 @@ void loop() {
 
 //Cycle through readings to display on LCD screen
 //loop1:CO loop2:NO2 loop3:O3 loop4:temp loop5:hum  
-//TODO: add particulate 
-switch (flag) {
+int f = 5;
+
+#if DUST_SENSOR
+f = 7;
+#endif
+
+switch (flag % f) {
   case 0: {  
     lcd_print_top("    CO value");
     lcd.setCursor(4,1);
@@ -479,6 +485,7 @@ switch (flag) {
     }
     break;
   }
+#if DUST_SENSOR  
   case 5: {
     lcd_print_top("Small particles");
     lcd.setCursor(5,1);
@@ -491,9 +498,9 @@ switch (flag) {
     lcd.print(a2); lcd.print(" %");
     break;
   }
+#endif  
 }
 flag++;
-flag %= 7;
    
     while (client.connected()) {    
       while (client.available()) {            

@@ -9,53 +9,6 @@ volatile uint16_t sample_buffer1[SAMPLE_BUFFER_SIZE] = {0};
 volatile uint16_t sample_buffer2[SAMPLE_BUFFER_SIZE] = {0};
 volatile uint32_t sample_index = 0;
 
-
-
-
-//long _previousMillis = 0;
-//long _interval = 1000;
-
-/*
-void setup(void){
-  wf.begin();
-  Serial.begin(115200);
-  Serial.print("Hello World\n#Samples: ");
-  Serial.println(NUM_SAMPLES);
-  Serial.print("Buffer Size: ");
-  Serial.println(SAMPLE_BUFFER_SIZE);
-  
-  setupTimer2Interrupt();
-  pinMode(25, INPUT); //PORTD5
-  pinMode(26, INPUT); //PORTD6
-  
-  Serial.println("#0a, #1a, #0b, #1b");
-}
-*/
-
-/*
-void loop(void){
-  unsigned long currentMillis = millis();
-  if(currentMillis - _previousMillis > _interval) {
-    _previousMillis = currentMillis;   
-    cli();
-    Serial.print(num_zeros1);
-    Serial.print(", ");
-    Serial.print(num_ones1);
-    Serial.print(", ");    
-    Serial.print(num_zeros2);
-    Serial.print(", ");
-    Serial.print(num_ones2);     
-    Serial.println();
-    sei();
-  }
-
-  updateCounts();
-  
-  
-}
-
-*/
-
 void setupTimer2Interrupt(void){
   TCCR2A = 0x00;
   TCCR2B = 0x04; // prescaler = 64
