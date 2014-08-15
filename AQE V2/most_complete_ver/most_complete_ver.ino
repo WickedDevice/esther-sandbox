@@ -188,7 +188,16 @@ void setup(void)
     else serial_number[3*ii+2] = ':';
   }
   Serial.println(serial_number);  
+  lcd_print_top(" Serial Num: ");
+  lcd.print(serial_number[0]);
+  lcd.print(serial_number[1]);
+  lcd.print(serial_number[2]);
+  lcd_print_bottom(" ");
+  for (int i = 3; i < 17; i++) {
+     lcd.print(serial_number[i]);
+  }
   Serial.println(F("**********************************************************************************"));
+  delay(1000);
   
   // Get the website IP
   ip = 0;
@@ -197,6 +206,8 @@ void setup(void)
   }
   
   //Get stored API key, feed ID, and calibration data
+  long magic;
+  eeprom_read_block(&magic, (const void*)CAL_MAGIC, sizeof(float));
   uint8_t test = eeprom_read_byte((const uint8_t *) ACTIVATION_STATUS_EEPROM_ADDRESS);
   if(test != PROVISIONING_STATUS_GOOD){
     for(;;) {
@@ -207,23 +218,19 @@ void setup(void)
       lcd_print_bottom(" Wicked Device");
       delay(2000);
       tinyWDT.pet();
+      if(magic != magic_number) {
+        lcd_print_top("Missing sensor");
+        lcd_print_bottom("calibration data!");
+        delay(2000);
+        lcd_print_top(" Please contact");
+        lcd_print_bottom(" Wicked Device");
+        delay(2000);
+        tinyWDT.pet();
+      }
     }
   }
   eeprom_read_block(api_key, (const void*)API_KEY_EEPROM_ADDRESS, API_KEY_LENGTH);
   eeprom_read_block(feedID, (const void*)FEED_ID_EEPROM_ADDRESS, FEED_ID_LENGTH); 
-  long magic;
-  eeprom_read_block(&magic, (const void*)CAL_MAGIC, sizeof(float));
-  if(magic != magic_number) {
-    for (;;) {
-      lcd_print_top("Missing sensor");
-      lcd_print_bottom("calibration data!");
-      delay(2000);
-      lcd_print_top(" Please contact");
-      lcd_print_bottom(" Wicked Device");
-      delay(2000);
-      tinyWDT.pet();
-    }
-  }
 
   //read all constants whether they are there or not
   //if the sensor module is not detected, the value will not be used anyways
