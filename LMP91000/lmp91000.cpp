@@ -6,11 +6,24 @@ LMP91000::LMP91000(uint8_t menb_pin) {
 }
 
 //assumes menb is handled correctly
-void LMP91000::write(uint8_t reg, uint8_t data) {
+int LMP91000::write(uint8_t reg, uint8_t data) {
 	Wire.beginTransmission(LMP91000_I2C_Address_W);
 	Wire.write(reg);
 	Wire.write(data);
 	Wire.endTransmission();
+	
+
+	byte res = 0;
+	Wire.requestFrom(LMP91000_I2C_Address, 1);
+	if(Wire.available()) {
+    res = Wire.read();
+	}
+	if (res != data) {
+		Serial.println("Write failed!");
+		return 0;
+	}
+
+	return 1;
 }
 
 uint8_t LMP91000::status(void) {
@@ -43,25 +56,25 @@ bool LMP91000::begin(uint8_t tiacn, uint8_t refcn, uint8_t modecn) {
 	
 	//set TIA reg
 	Wire.beginTransmission(LMP91000_I2C_Address);
-	write(LMP91000_LOCK_REG, LMP91000_WRITE_UNLOCK);
+	while (!write(LMP91000_LOCK_REG, LMP91000_WRITE_UNLOCK));
 	Wire.endTransmission();
 	
 	Wire.beginTransmission(LMP91000_I2C_Address);
-	write(LMP91000_TIACN_REG, _tiacn);
+	while (!write(LMP91000_TIACN_REG, _tiacn));
 	Wire.endTransmission();
 	
 	//set REFCN reg
 	Wire.beginTransmission(LMP91000_I2C_Address);
-	write(LMP91000_REFCN_REG, _refcn);
+	while(!write(LMP91000_REFCN_REG, _refcn));
 	Wire.endTransmission();
 	
 	//set MODECN reg
 	Wire.beginTransmission(LMP91000_I2C_Address);
-	write(LMP91000_MODECN_REG, _modecn);
+	while(!write(LMP91000_MODECN_REG, _modecn));
 	Wire.endTransmission();
 	
 	Wire.beginTransmission(LMP91000_I2C_Address);
-	write(LMP91000_LOCK_REG, LMP91000_WRITE_LOCK);
+	while(!(LMP91000_LOCK_REG, LMP91000_WRITE_LOCK));
 	Wire.endTransmission();
 	
 	return true;
