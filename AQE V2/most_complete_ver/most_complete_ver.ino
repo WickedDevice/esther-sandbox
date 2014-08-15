@@ -32,6 +32,7 @@ DHT22 myDHT22(A1);
 LiquidCrystal lcd(A3,A2, 4,5,6,8);
 MCP3424 MCP(0);
 TinyWatchdog tinyWDT;
+uint8_t mymac[6];
 
 #define TIACN_REG_VAL 0x1c
 #define CO_REFCN 0x91
@@ -97,6 +98,7 @@ void setup(void)
 {  
   wf.begin();
   Serial.begin(115200);
+  
   lcd.begin(16,2);
   lcd.clear();
   uint8_t smc_status = eeprom_read_byte((const uint8_t*)tinyWDT_STATUS);
@@ -170,6 +172,24 @@ void setup(void)
     }
   }
   time = 0;
+  
+  if (!cc3000.getMacAddress(mymac)) {
+  	Serial.println("Could not get MAC address!");
+  	while (1); //TODO: is this correct behavior?
+   }
+ 
+  char serial_number[18] = {0};
+  Serial.println();
+  Serial.println(F("**********************************************************************************"));
+  Serial.print(F("Serial #: "));
+  for(uint8_t ii = 0; ii < 6; ii++){
+    convertByteArrayToAsciiHex(mymac + ii, serial_number + 3*ii, 1);
+    if(ii == 5) serial_number[3*ii+2] = '\0';
+    else serial_number[3*ii+2] = ':';
+  }
+  Serial.println(serial_number);  
+  Serial.println(F("**********************************************************************************"));
+  
   // Get the website IP
   ip = 0;
   while(ip == 0) {
@@ -616,7 +636,7 @@ boolean attemptSmartConfigReconnect(void){
   //Serial.println(1);
   if (!cc3000.begin(false, true))
   {
-    lcd_print_top("Can’t connect wi");
+    lcd_print_top("Can't connect wi");
     lcd_print_bottom("th saved details");
     return false;
   }
@@ -667,8 +687,17 @@ boolean attemptSmartConfigCreate(void){
   return true;
 }
 
+static void convertByteArrayToAsciiHex(uint8_t* hash, char * returnString, uint8_t byte_array_length) {
+  const char digit2Ascii[16] = {'0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};
+  for (int i=0; i<byte_array_length; i++) {
+    returnString[2*i    ] = digit2Ascii[hash[i]>>4];
+    returnString[2*i + 1] = digit2Ascii[hash[i]&0xf];
+  }
+  returnString[2*(byte_array_length-1) + 2] = '\0';
+}
+
 void _reset(void) {
-   time = 10000;
+   time = 5000;
    while (time > 0) {
       lcd_print_top("Resetting in ");
       lcd.setCursor(0,1);
